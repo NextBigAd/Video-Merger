@@ -1,0 +1,356 @@
+/* ===================================================
+   Video Merger – Stylesheet
+   Clean, modern, responsive UI with a dark-accented theme.
+   =================================================== */
+
+/* ── Reset & Base ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0f1117;
+  --surface:   #1a1d27;
+  --surface2:  #242834;
+  --border:    #2e3345;
+  --text:      #e4e6ef;
+  --text-dim:  #8b8fa7;
+  --accent:    #6366f1;
+  --accent-hover: #818cf8;
+  --danger:    #ef4444;
+  --success:   #22c55e;
+  --warning:   #f59e0b;
+  --radius:    10px;
+  --shadow:    0 2px 12px rgba(0,0,0,.35);
+}
+
+html { font-size: 15px; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+.header {
+  background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+  padding: 1.6rem 2rem;
+  border-bottom: 1px solid var(--border);
+}
+.header-inner { max-width: 1400px; margin: 0 auto; }
+.logo { font-size: 1.6rem; font-weight: 700; display: flex; align-items: center; gap: .5rem; }
+.logo-icon { color: var(--accent); font-size: 1.4rem; }
+.tagline { color: var(--text-dim); margin-top: .3rem; font-size: .9rem; }
+
+/* ── App Layout (two-column) ── */
+.app-layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 1.5rem;
+  max-width: 1400px;
+  margin: 1.5rem auto;
+  padding: 0 1.5rem;
+}
+
+/* ── Panels ── */
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+}
+
+.panel-title {
+  font-size: 1.1rem;
+  margin-bottom: 1.2rem;
+  padding-bottom: .6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Drop Zone ── */
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 3rem 1rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .2s, background .2s;
+}
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--accent);
+  background: rgba(99,102,241,.08);
+}
+.drop-icon { font-size: 2.5rem; display: block; margin-bottom: .5rem; }
+.drop-hint { color: var(--text-dim); font-size: .85rem; margin-top: .3rem; }
+
+/* ── Upload Slots (2 side-by-side) ── */
+.upload-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.upload-slot {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  transition: border-color .2s;
+}
+.upload-slot.filled {
+  border-color: var(--accent);
+}
+
+.slot-header {
+  font-weight: 700;
+  font-size: .95rem;
+  text-align: center;
+  padding-bottom: .4rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.slot-preview {
+  width: 100%;
+  aspect-ratio: 16/9;
+  background: #000;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.slot-preview img,
+.slot-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+}
+.slot-placeholder {
+  color: var(--text-dim);
+  font-size: .85rem;
+}
+
+.slot-info {
+  font-size: .8rem;
+  color: var(--text-dim);
+  text-align: center;
+  min-height: 1.2em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slot-trim {
+  display: flex;
+  gap: .5rem;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.slot-trim label {
+  font-size: .78rem;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: .3rem;
+}
+.slot-trim input {
+  width: 60px;
+  padding: .25rem .4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: .8rem;
+}
+
+.slot-actions {
+  display: flex;
+  gap: .5rem;
+  justify-content: center;
+}
+
+.btn-slot-pick {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: .4rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: .82rem;
+  transition: border-color .2s;
+}
+.btn-slot-pick:hover { border-color: var(--accent); }
+
+.btn-remove {
+  background: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: .4rem .8rem;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: .78rem;
+  transition: background .2s;
+}
+.btn-remove:hover { background: rgba(239,68,68,.15); }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: .7rem 1.6rem;
+  border: none;
+  border-radius: var(--radius);
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s, opacity .2s;
+}
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.btn-merge {
+  background: var(--accent);
+  color: #fff;
+  width: 100%;
+  margin-top: 1rem;
+}
+.btn-merge:hover:not(:disabled) { background: var(--accent-hover); }
+
+.btn-download {
+  background: var(--success);
+  color: #fff;
+}
+.btn-download:hover { filter: brightness(1.1); }
+
+.btn-cleanup {
+  background: transparent;
+  border: 1px solid var(--text-dim);
+  color: var(--text-dim);
+}
+.btn-cleanup:hover { border-color: var(--text); color: var(--text); }
+
+/* ── Progress Bar ── */
+.merge-section { margin-top: .5rem; }
+.progress-container {
+  margin-top: .8rem;
+  display: flex;
+  align-items: center;
+  gap: .8rem;
+}
+.progress-bar {
+  flex: 1;
+  height: 12px;
+  background: var(--surface2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  border-radius: 6px;
+  transition: width .3s ease;
+}
+.progress-text { font-size: .85rem; font-weight: 600; min-width: 40px; }
+
+/* ── Result Area ── */
+.result-area {
+  margin-top: 1.2rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--border);
+}
+.result-area h3 {
+  color: var(--success);
+  margin-bottom: .8rem;
+}
+.preview-player {
+  width: 100%;
+  max-height: 400px;
+  border-radius: var(--radius);
+  background: #000;
+}
+.result-actions {
+  display: flex;
+  gap: .8rem;
+  margin-top: .8rem;
+}
+
+/* ── Settings Panel ── */
+.setting-group {
+  margin-bottom: 1rem;
+}
+.setting-group label {
+  display: block;
+  font-size: .85rem;
+  font-weight: 600;
+  margin-bottom: .35rem;
+}
+.optional { font-weight: 400; color: var(--text-dim); }
+
+.setting-group select,
+.setting-group input[type="text"] {
+  width: 100%;
+  padding: .55rem .7rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: .88rem;
+  transition: border-color .2s;
+}
+.setting-group select:focus,
+.setting-group input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.custom-input { margin-top: .35rem; }
+
+/* ── Toast Notifications ── */
+.toast-container {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  z-index: 9999;
+}
+.toast {
+  padding: .8rem 1.2rem;
+  border-radius: var(--radius);
+  color: #fff;
+  font-size: .88rem;
+  box-shadow: var(--shadow);
+  animation: slideIn .3s ease;
+  max-width: 380px;
+}
+.toast-error   { background: var(--danger); }
+.toast-success { background: var(--success); }
+.toast-info    { background: var(--accent); }
+
+@keyframes slideIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .app-layout {
+    grid-template-columns: 1fr;
+  }
+  .panel-right {
+    order: -1; /* settings above clips on mobile */
+  }
+}
+
+@media (max-width: 600px) {
+  .upload-slots {
+    grid-template-columns: 1fr;
+  }
+}

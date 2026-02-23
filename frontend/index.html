@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Video Merger</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Header ── -->
+  <header class="header">
+    <div class="header-inner">
+      <h1 class="logo"><span class="logo-icon">&#9654;</span> Video Merger</h1>
+      <p class="tagline">Upload, arrange, and merge your videos — right in the browser.</p>
+    </div>
+  </header>
+
+  <!-- ── Main Layout ── -->
+  <main class="app-layout">
+
+    <!-- Left panel: upload + clip list -->
+    <section class="panel panel-left">
+
+      <!-- Drop zone: accepts 2 files at once via drag-and-drop -->
+      <div id="dropZone" class="drop-zone">
+        <div class="drop-zone-content">
+          <span class="drop-icon">&#128249;</span>
+          <p>Drag &amp; drop 2 video files here</p>
+          <p class="drop-hint">or use the slots below to pick individually</p>
+          <input type="file" id="dropInput" multiple accept="video/*" hidden />
+        </div>
+      </div>
+
+      <!-- Two upload slots side by side -->
+      <div class="upload-slots">
+        <div class="upload-slot" id="slot0">
+          <div class="slot-header">Video 1</div>
+          <div class="slot-preview" id="slotPreview0">
+            <span class="slot-placeholder">No video selected</span>
+          </div>
+          <div class="slot-info" id="slotInfo0"></div>
+          <div class="slot-trim" id="slotTrim0" hidden>
+            <label>Start <input type="text" id="trimStart0" placeholder="0" /> sec</label>
+            <label>End <input type="text" id="trimEnd0" placeholder="end" /> sec</label>
+          </div>
+          <div class="slot-actions">
+            <button class="btn btn-slot-pick" id="pickBtn0">Choose File</button>
+            <button class="btn-remove" id="removeBtn0" hidden>Remove</button>
+          </div>
+          <input type="file" id="fileInput0" accept="video/*" hidden />
+        </div>
+
+        <div class="upload-slot" id="slot1">
+          <div class="slot-header">Video 2</div>
+          <div class="slot-preview" id="slotPreview1">
+            <span class="slot-placeholder">No video selected</span>
+          </div>
+          <div class="slot-info" id="slotInfo1"></div>
+          <div class="slot-trim" id="slotTrim1" hidden>
+            <label>Start <input type="text" id="trimStart1" placeholder="0" /> sec</label>
+            <label>End <input type="text" id="trimEnd1" placeholder="end" /> sec</label>
+          </div>
+          <div class="slot-actions">
+            <button class="btn btn-slot-pick" id="pickBtn1">Choose File</button>
+            <button class="btn-remove" id="removeBtn1" hidden>Remove</button>
+          </div>
+          <input type="file" id="fileInput1" accept="video/*" hidden />
+        </div>
+      </div>
+
+      <!-- Merge button + progress -->
+      <div class="merge-section">
+        <button id="mergeBtn" class="btn btn-merge" disabled>Merge Videos</button>
+        <div id="progressContainer" class="progress-container" hidden>
+          <div class="progress-bar">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+          <span id="progressText" class="progress-text">0%</span>
+        </div>
+      </div>
+
+      <!-- Result area -->
+      <div id="resultArea" class="result-area" hidden>
+        <h3>Merge Complete!</h3>
+        <video id="previewPlayer" controls class="preview-player"></video>
+        <div class="result-actions">
+          <button id="downloadBtn" class="btn btn-download">Download Video</button>
+          <button id="cleanupBtn" class="btn btn-cleanup">Delete Temp Files</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right panel: settings -->
+    <aside class="panel panel-right">
+      <h2 class="panel-title">Merge Settings</h2>
+
+      <!-- Resolution -->
+      <div class="setting-group">
+        <label for="resolution">Resolution</label>
+        <select id="resolution">
+          <option value="1920x1080">1920 &times; 1080 (Full HD)</option>
+          <option value="1280x720">1280 &times; 720 (HD)</option>
+          <option value="720x480">720 &times; 480 (SD)</option>
+          <option value="3840x2160">3840 &times; 2160 (4K)</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <input type="text" id="customResolution" class="custom-input" placeholder="e.g. 1440x900" hidden />
+      </div>
+
+      <!-- Aspect Ratio -->
+      <div class="setting-group">
+        <label for="aspectRatio">Aspect Ratio</label>
+        <select id="aspectRatio">
+          <option value="16:9">16:9 (Landscape)</option>
+          <option value="9:16">9:16 (Portrait)</option>
+          <option value="4:3">4:3 (Classic)</option>
+          <option value="1:1">1:1 (Square)</option>
+          <option value="custom">Custom…</option>
+        </select>
+        <input type="text" id="customAspectRatio" class="custom-input" placeholder="e.g. 21:9" hidden />
+      </div>
+
+      <!-- Output Format -->
+      <div class="setting-group">
+        <label for="format">Output Format</label>
+        <select id="format">
+          <option value="mp4">MP4</option>
+          <option value="mov">MOV</option>
+          <option value="webm">WebM</option>
+        </select>
+      </div>
+
+      <!-- Quality -->
+      <div class="setting-group">
+        <label for="quality">Quality</label>
+        <select id="quality">
+          <option value="medium">Medium (3 Mbps)</option>
+          <option value="low">Low (1 Mbps)</option>
+          <option value="high">High (6 Mbps)</option>
+          <option value="custom">Custom Bitrate…</option>
+        </select>
+        <input type="text" id="customBitrate" class="custom-input" placeholder="e.g. 5000k" hidden />
+      </div>
+
+      <!-- Audio -->
+      <div class="setting-group">
+        <label for="audioOption">Audio</label>
+        <select id="audioOption">
+          <option value="keepAll">Keep all audio</option>
+          <option value="muteAll">Mute all</option>
+          <option value="keepFirst">Keep first clip only</option>
+        </select>
+      </div>
+
+      <!-- Transition -->
+      <div class="setting-group">
+        <label for="transition">Transition</label>
+        <select id="transition">
+          <option value="none">None</option>
+          <option value="fade">Fade</option>
+          <option value="crossfade">Crossfade</option>
+        </select>
+      </div>
+
+      <!-- Watermark -->
+      <div class="setting-group">
+        <label for="watermark">Watermark Text <span class="optional">(optional)</span></label>
+        <input type="text" id="watermark" placeholder="e.g. © My Channel" />
+      </div>
+    </aside>
+  </main>
+
+  <!-- Toast container for error / info messages -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
