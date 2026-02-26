@@ -1,18 +1,23 @@
 /**
  * Merge Controller
  *
- * Handles the business logic for uploading, merging, downloading,
- * previewing, and cleaning up video files.  Merge progress is
- * streamed to the client via Server-Sent Events (SSE).
+ * Handles uploading, merging (via local FFmpeg), and cleaning up video files.
+ *
+ * The merge endpoint is an SSE stream: it runs FFmpeg locally,
+ * streams progress, and sends the final download URL to the client.
  */
 
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { mergeVideos, probeVideo, generateThumbnail } = require('../utils/ffmpegHelper');
+const { mergeVideos } = require('../utils/ffmpegHelper');
 
-// In-memory store for job state (progress, file paths, status)
+// In-memory store for completed jobs (for download/cleanup)
 const jobs = new Map();
+
+// Output directory
+const outputsDir = path.join(__dirname, '..', 'outputs');
+if (!fs.existsSync(outputsDir)) fs.mkdirSync(outputsDir, { recursive: true });
 
 // Allowed video MIME types
 const ALLOWED_TYPES = [
@@ -22,8 +27,8 @@ const ALLOWED_TYPES = [
 
 /**
  * POST /upload
- * Accept multiple video files, validate them, probe metadata,
- * generate thumbnails, and return file info to the client.
+ * Accept 1-2 video files via multer, validate MIME types,
+ * and return basic file info.
  */
 async function uploadVideos(req, res) {
   try {
@@ -31,7 +36,6 @@ async function uploadVideos(req, res) {
       return res.status(400).json({ error: 'No video files uploaded.' });
     }
 
-    // Accept 1 or 2 files per upload call (frontend uploads per-slot)
     if (req.files.length > 2) {
       req.files.forEach(f => { try { fs.unlinkSync(f.path); } catch (_) {} });
       return res.status(400).json({ error: 'Please upload exactly 2 videos to merge.' });
@@ -42,7 +46,6 @@ async function uploadVideos(req, res) {
     // Validate MIME types
     for (const file of req.files) {
       if (!ALLOWED_TYPES.includes(file.mimetype)) {
-        // Remove all uploaded files on rejection
         req.files.forEach(f => { try { fs.unlinkSync(f.path); } catch (_) {} });
         return res.status(400).json({
           error: `Invalid file type: ${file.originalname}. Only video files are allowed.`,
@@ -50,32 +53,13 @@ async function uploadVideos(req, res) {
       }
     }
 
-    // Probe each file and generate thumbnails
-    const filesInfo = await Promise.all(
-      req.files.map(async (file) => {
-        const meta = await probeVideo(file.path);
-
-        // Generate a thumbnail
-        const thumbName = `thumb_${path.parse(file.filename).name}.png`;
-        const thumbPath = path.join(path.dirname(file.path), thumbName);
-        try {
-          await generateThumbnail(file.path, thumbPath);
-        } catch (_) {
-          // Thumbnail generation is best-effort; ignore failures
-        }
-
-        return {
-          id: file.filename,
-          originalName: file.originalname,
-          path: file.path,
-          size: file.size,
-          duration: meta.duration,
-          width: meta.width,
-          height: meta.height,
-          thumbnail: `/uploads/${thumbName}`,
-        };
-      })
-    );
+    // Return basic info
+    const filesInfo = req.files.map((file) => ({
+      id: file.filename,
+      originalName: file.originalname,
+      path: file.path,
+      size: file.size,
+    }));
 
     res.json({ files: filesInfo });
   } catch (err) {
@@ -85,19 +69,28 @@ async function uploadVideos(req, res) {
 }
 
 /**
- * POST /merge
- * Start a merge job. Expects a JSON body with:
- *   videos      – ordered array of { id, path, trimStart, trimEnd }
- *   resolution  – e.g. "1920x1080"
- *   aspectRatio – e.g. "16:9"
- *   format      – mp4 | mov | webm
- *   quality     – low | medium | high | custom
- *   customBitrate – e.g. "5000k"
- *   audioOption – keepAll | muteAll | keepFirst
- *   transition  – none | fade | crossfade
- *   watermark   – optional string
+ * POST /merge  (SSE endpoint)
+ *
+ * Expects JSON body with:
+ *   videos       – array of 2 objects { id, path, originalName, trimStart, trimEnd }
+ *   resolution, format, quality, customBitrate,
+ *   audioOption, transition, watermark
+ *
+ * Streams progress via SSE, then sends the download URL.
  */
 async function startMerge(req, res) {
+  // ── SSE headers ──
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  function send(obj) {
+    res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    if (res.flush) res.flush();
+  }
+
   try {
     const {
       videos,
@@ -111,31 +104,27 @@ async function startMerge(req, res) {
     } = req.body;
 
     if (!videos || !Array.isArray(videos) || videos.length !== 2) {
-      return res.status(400).json({ error: 'Please upload exactly 2 videos to merge.' });
+      send({ percent: 0, error: 'Please upload exactly 2 videos to merge.' });
+      return res.end();
     }
 
-    // Verify every referenced file exists
+    // Verify both local files exist
     for (const v of videos) {
       if (!fs.existsSync(v.path)) {
-        return res.status(400).json({ error: `Video file not found: ${v.originalName || v.id}` });
+        send({ percent: 0, error: `Video file not found: ${v.originalName || v.id}` });
+        return res.end();
       }
     }
 
-    // Create a unique job ID and output path
+    send({ percent: 5, status: 'Starting merge...' });
+
+    // Build output path
     const jobId = uuidv4();
-    const outputDir = path.join(__dirname, '..', 'outputs');
-    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
-    const outputPath = path.join(outputDir, `merged_${jobId}.${format}`);
+    const outputFilename = `merged-${jobId}.${format}`;
+    const outputPath = path.join(outputsDir, outputFilename);
 
-    // Register the job
-    jobs.set(jobId, { progress: 0, status: 'processing', outputPath, videos });
-
-    // Respond immediately with the job ID
-    res.json({ jobId, message: 'Merge started.' });
-
-    // Run the merge in the background
-    mergeVideos({
-      videos,
+    // Settings for FFmpeg
+    const settings = {
       resolution,
       format,
       quality,
@@ -143,144 +132,53 @@ async function startMerge(req, res) {
       audioOption,
       transition,
       watermark,
+      trimStart0: videos[0].trimStart,
+      trimEnd0: videos[0].trimEnd,
+      trimStart1: videos[1].trimStart,
+      trimEnd1: videos[1].trimEnd,
+    };
+
+    // Run FFmpeg locally
+    await mergeVideos(
+      videos[0].path,
+      videos[1].path,
       outputPath,
-      onProgress: (percent) => {
-        const job = jobs.get(jobId);
-        if (job) job.progress = percent;
-      },
-    })
-      .then(() => {
-        const job = jobs.get(jobId);
-        if (job) {
-          job.status = 'completed';
-          job.progress = 100;
-        }
-      })
-      .catch((err) => {
-        console.error('[Merge] Job failed:', err.message);
-        const job = jobs.get(jobId);
-        if (job) {
-          job.status = 'failed';
-          job.error = err.message;
-        }
-      });
+      settings,
+      (percent) => {
+        // Map FFmpeg 0-100 to our 5-95 range
+        const mapped = 5 + Math.round(percent * 0.9);
+        send({ percent: mapped, status: 'Merging videos...' });
+      }
+    );
+
+    // Build download URL (served via /outputs/ static route)
+    const downloadUrl = `/outputs/${outputFilename}`;
+
+    jobs.set(jobId, {
+      status: 'completed',
+      downloadUrl,
+      outputPath,
+      videos,
+    });
+
+    send({
+      percent: 100,
+      done: true,
+      downloadUrl,
+      jobId,
+    });
+
+    res.end();
   } catch (err) {
-    console.error('[Merge] Error:', err);
-    res.status(500).json({ error: 'Failed to start merge.' });
-  }
-}
-
-/**
- * GET /progress/:id
- * Stream merge progress to the client via Server-Sent Events.
- */
-function streamProgress(req, res) {
-  const { id } = req.params;
-  const job = jobs.get(id);
-
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found.' });
-  }
-
-  // Set SSE headers
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-    Connection: 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
-  });
-
-  // Send progress every 500 ms
-  const interval = setInterval(() => {
-    const current = jobs.get(id);
-    if (!current) {
-      clearInterval(interval);
-      res.end();
-      return;
-    }
-
-    const data = JSON.stringify({
-      progress: current.progress,
-      status: current.status,
-      error: current.error || null,
-    });
-    res.write(`data: ${data}\n\n`);
-
-    // Stop streaming once the job finishes or fails
-    if (current.status === 'completed' || current.status === 'failed') {
-      clearInterval(interval);
-      res.end();
-    }
-  }, 500);
-
-  // Clean up if the client disconnects
-  req.on('close', () => clearInterval(interval));
-}
-
-/**
- * GET /download/:id
- * Send the merged output file as a download.
- */
-function downloadVideo(req, res) {
-  const { id } = req.params;
-  const job = jobs.get(id);
-
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found.' });
-  }
-  if (job.status !== 'completed') {
-    return res.status(400).json({ error: 'Merge is not yet complete.' });
-  }
-  if (!fs.existsSync(job.outputPath)) {
-    return res.status(404).json({ error: 'Output file not found.' });
-  }
-
-  res.download(job.outputPath);
-}
-
-/**
- * GET /preview/:id
- * Stream the merged video for in-browser preview (supports range requests).
- */
-function previewVideo(req, res) {
-  const { id } = req.params;
-  const job = jobs.get(id);
-
-  if (!job || job.status !== 'completed' || !fs.existsSync(job.outputPath)) {
-    return res.status(404).json({ error: 'Preview not available.' });
-  }
-
-  const stat = fs.statSync(job.outputPath);
-  const fileSize = stat.size;
-  const range = req.headers.range;
-
-  if (range) {
-    // Serve a byte-range for HTML5 video seeking
-    const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-    const chunkSize = end - start + 1;
-
-    const stream = fs.createReadStream(job.outputPath, { start, end });
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
-      'Content-Type': 'video/mp4',
-    });
-    stream.pipe(res);
-  } else {
-    res.writeHead(200, {
-      'Content-Length': fileSize,
-      'Content-Type': 'video/mp4',
-    });
-    fs.createReadStream(job.outputPath).pipe(res);
+    console.error('[Merge] Error:', err.message, err.stack);
+    send({ percent: 0, error: err.message || 'Merge failed.' });
+    res.end();
   }
 }
 
 /**
  * DELETE /cleanup/:id
- * Remove all temp files (uploads + output) associated with a job.
+ * Remove local uploaded files and output file for a job.
  */
 function cleanup(req, res) {
   const { id } = req.params;
@@ -290,18 +188,18 @@ function cleanup(req, res) {
     return res.status(404).json({ error: 'Job not found.' });
   }
 
-  // Delete the output file
-  if (job.outputPath && fs.existsSync(job.outputPath)) {
-    fs.unlinkSync(job.outputPath);
-  }
-
-  // Delete uploaded source files for this job
+  // Delete uploaded source files
   if (job.videos && Array.isArray(job.videos)) {
     job.videos.forEach((v) => {
       if (v.path && fs.existsSync(v.path)) {
         fs.unlinkSync(v.path);
       }
     });
+  }
+
+  // Delete output file
+  if (job.outputPath && fs.existsSync(job.outputPath)) {
+    fs.unlinkSync(job.outputPath);
   }
 
   jobs.delete(id);
@@ -329,9 +227,7 @@ function cleanupOldFiles() {
           fs.unlinkSync(filePath);
           console.log('[Cleanup] Deleted stale file:', file);
         }
-      } catch (_) {
-        // Ignore errors on individual files
-      }
+      } catch (_) {}
     });
   });
 }
@@ -339,9 +235,6 @@ function cleanupOldFiles() {
 module.exports = {
   uploadVideos,
   startMerge,
-  streamProgress,
-  downloadVideo,
-  previewVideo,
   cleanup,
   cleanupOldFiles,
 };

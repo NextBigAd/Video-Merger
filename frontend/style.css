@@ -224,6 +224,7 @@ body {
 .btn-download {
   background: var(--success);
   color: #fff;
+  text-decoration: none;
 }
 .btn-download:hover { filter: brightness(1.1); }
 
@@ -257,6 +258,7 @@ body {
   transition: width .3s ease;
 }
 .progress-text { font-size: .85rem; font-weight: 600; min-width: 40px; }
+.status-text { font-size: .8rem; color: var(--text-dim); width: 100%; margin-top: .4rem; }
 
 /* ── Result Area ── */
 .result-area {
@@ -267,12 +269,6 @@ body {
 .result-area h3 {
   color: var(--success);
   margin-bottom: .8rem;
-}
-.preview-player {
-  width: 100%;
-  max-height: 400px;
-  border-radius: var(--radius);
-  background: #000;
 }
 .result-actions {
   display: flex;

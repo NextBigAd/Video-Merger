@@ -1,8 +1,12 @@
 /**
  * Merge Routes
  *
- * Defines all API endpoints and wires them to the merge controller.
+ * Defines API endpoints and wires them to the merge controller.
  * Configures multer for file uploads with size and type validation.
+ *
+ * POST /upload   – accept 1-2 video files via multer
+ * POST /merge    – SSE stream: uploads to Rendi, merges, returns URL
+ * DELETE /cleanup/:id – delete local temp files
  */
 
 const express = require('express');
@@ -15,10 +19,9 @@ const router = express.Router();
 
 // ── Multer configuration ──
 
-// Parse the MAX_FILE_SIZE from .env (e.g. "500mb" → bytes)
 function parseMaxFileSize(sizeStr) {
   const match = (sizeStr || '500mb').match(/^(\d+)(mb|gb|kb)?$/i);
-  if (!match) return 500 * 1024 * 1024; // default 500 MB
+  if (!match) return 500 * 1024 * 1024;
   const num = parseInt(match[1], 10);
   const unit = (match[2] || 'mb').toLowerCase();
   const multipliers = { kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3 };
@@ -32,14 +35,12 @@ const storage = multer.diskStorage({
     cb(null, path.join(__dirname, '..', 'uploads'));
   },
   filename: (req, file, cb) => {
-    // Unique filename to avoid collisions
     const ext = path.extname(file.originalname);
     cb(null, `${uuidv4()}${ext}`);
   },
 });
 
 const fileFilter = (req, file, cb) => {
-  // Only allow video MIME types
   if (file.mimetype.startsWith('video/')) {
     cb(null, true);
   } else {
@@ -55,22 +56,13 @@ const upload = multer({
 
 // ── Routes ──
 
-// Upload exactly 2 video files for merging
+// Upload 1-2 video files (frontend uploads per-slot)
 router.post('/upload', upload.array('videos', 2), controller.uploadVideos);
 
-// Start a merge job
+// Start a merge job (SSE stream — uploads to Rendi, merges, returns download URL)
 router.post('/merge', express.json(), controller.startMerge);
 
-// Stream merge progress via SSE
-router.get('/progress/:id', controller.streamProgress);
-
-// Download the merged video
-router.get('/download/:id', controller.downloadVideo);
-
-// Stream a preview of the merged video
-router.get('/preview/:id', controller.previewVideo);
-
-// Delete temp files for a job
+// Delete local temp files for a job
 router.delete('/cleanup/:id', controller.cleanup);
 
 // ── Multer error handler ──

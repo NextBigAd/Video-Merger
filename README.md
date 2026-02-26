@@ -1,3 +1,12 @@
+---
+title: Video Merger
+emoji: 🎬
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+---
+
 # Video Merger
 
 A full-stack video merging tool built with **Node.js**, **Express**, and **FFmpeg**.
