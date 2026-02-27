@@ -15,8 +15,8 @@ const { mergeVideos } = require('../utils/ffmpegHelper');
 // In-memory store for completed jobs (for download/cleanup)
 const jobs = new Map();
 
-// Output directory
-const outputsDir = path.join(__dirname, '..', 'outputs');
+// Output directory (use /tmp for HF Spaces compatibility)
+const outputsDir = '/tmp/outputs';
 if (!fs.existsSync(outputsDir)) fs.mkdirSync(outputsDir, { recursive: true });
 
 // Allowed video MIME types
@@ -211,8 +211,8 @@ function cleanup(req, res) {
  */
 function cleanupOldFiles() {
   const dirs = [
-    path.join(__dirname, '..', 'uploads'),
-    path.join(__dirname, '..', 'outputs'),
+    '/tmp/uploads',
+    '/tmp/outputs',
   ];
 
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
@@ -232,9 +232,94 @@ function cleanupOldFiles() {
   });
 }
 
+/**
+ * POST /merge-videos  (REST API endpoint — Shotstack-style)
+ *
+ * Accepts multipart form data with fields "video1" and "video2".
+ * Merges them and returns the merged mp4 file directly in the response.
+ */
+async function mergeVideosRest(req, res) {
+  const tempFiles = [];
+
+  try {
+    if (!req.files || !req.files.video1 || !req.files.video2) {
+      return res.status(400).json({ error: 'Both "video1" and "video2" fields are required.' });
+    }
+
+    const video1 = req.files.video1[0];
+    const video2 = req.files.video2[0];
+    tempFiles.push(video1.path, video2.path);
+
+    // Validate MIME types
+    for (const file of [video1, video2]) {
+      if (!ALLOWED_TYPES.includes(file.mimetype)) {
+        return res.status(400).json({
+          error: `Invalid file type: ${file.originalname}. Only video files are allowed.`,
+        });
+      }
+    }
+
+    console.log(`[API] Merging: ${video1.originalname} + ${video2.originalname}`);
+
+    const jobId = uuidv4();
+    const outputFilename = `merged-${jobId}.mp4`;
+    const outputPath = path.join(outputsDir, outputFilename);
+    tempFiles.push(outputPath);
+
+    const settings = {
+      resolution: req.body.resolution || '1920x1080',
+      format: 'mp4',
+      quality: req.body.quality || 'medium',
+      audioOption: req.body.audioOption || 'keepAll',
+      transition: req.body.transition || 'none',
+    };
+
+    await mergeVideos(video1.path, video2.path, outputPath, settings, () => {});
+
+    // Send the merged file
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${outputFilename}"`);
+
+    const fileStream = fs.createReadStream(outputPath);
+    fileStream.pipe(res);
+
+    fileStream.on('end', () => {
+      // Clean up all temp files after sending
+      tempFiles.forEach((f) => {
+        try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {}
+      });
+    });
+
+    fileStream.on('error', (err) => {
+      console.error('[API] Stream error:', err.message);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Failed to send merged file.' });
+      }
+    });
+  } catch (err) {
+    console.error('[API] Merge error:', err.message, err.stack);
+    // Clean up temp files on error
+    tempFiles.forEach((f) => {
+      try { if (fs.existsSync(f)) fs.unlinkSync(f); } catch (_) {}
+    });
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message || 'Merge failed.' });
+    }
+  }
+}
+
+/**
+ * GET /health
+ */
+function health(req, res) {
+  res.json({ status: 'ok', message: 'Video Merger API is running' });
+}
+
 module.exports = {
   uploadVideos,
   startMerge,
+  mergeVideosRest,
+  health,
   cleanup,
   cleanupOldFiles,
 };

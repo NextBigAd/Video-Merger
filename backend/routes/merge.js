@@ -32,7 +32,7 @@ const maxFileSize = parseMaxFileSize(process.env.MAX_FILE_SIZE);
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(__dirname, '..', 'uploads'));
+    cb(null, '/tmp/uploads');
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname);
@@ -54,13 +54,39 @@ const upload = multer({
   limits: { fileSize: maxFileSize },
 });
 
+// Multer middleware for the REST API merge (video1 + video2 fields)
+const mergeUpload = upload.fields([
+  { name: 'video1', maxCount: 1 },
+  { name: 'video2', maxCount: 1 },
+]);
+
 // ── Routes ──
+
+// Health check
+router.get('/health', controller.health);
 
 // Upload 1-2 video files (frontend uploads per-slot)
 router.post('/upload', upload.array('videos', 2), controller.uploadVideos);
 
-// Start a merge job (SSE stream — uploads to Rendi, merges, returns download URL)
-router.post('/merge', express.json(), controller.startMerge);
+// POST /merge — smart route:
+//   multipart/form-data (video1 + video2) → REST API, returns merged file
+//   application/json (videos array)       → SSE stream for frontend UI
+router.post('/merge', (req, res, next) => {
+  const ct = (req.headers['content-type'] || '').toLowerCase();
+  if (ct.includes('multipart/form-data')) {
+    // REST API path — run multer then the REST controller
+    mergeUpload(req, res, (err) => {
+      if (err) return next(err);
+      controller.mergeVideosRest(req, res, next);
+    });
+  } else {
+    // Frontend SSE path — parse JSON then the SSE controller
+    express.json()(req, res, (err) => {
+      if (err) return next(err);
+      controller.startMerge(req, res, next);
+    });
+  }
+});
 
 // Delete local temp files for a job
 router.delete('/cleanup/:id', controller.cleanup);

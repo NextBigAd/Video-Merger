@@ -28,9 +28,9 @@ try {
 const app = express();
 const PORT = process.env.PORT || 7860;
 
-// ── Ensure directories exist ──
-const uploadsDir = path.join(__dirname, 'uploads');
-const outputsDir = path.join(__dirname, 'outputs');
+// ── Ensure directories exist (use /tmp for HF Spaces compatibility) ──
+const uploadsDir = '/tmp/uploads';
+const outputsDir = '/tmp/outputs';
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(outputsDir)) fs.mkdirSync(outputsDir, { recursive: true });
 
