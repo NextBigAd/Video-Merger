@@ -267,11 +267,15 @@ async function mergeVideosRest(req, res) {
     tempFiles.push(outputPath);
 
     const settings = {
-      resolution: req.body.resolution || '1920x1080',
+      resolution: req.body.resolution || '1280x720',
       format: 'mp4',
       quality: req.body.quality || 'medium',
       audioOption: req.body.audioOption || 'keepAll',
       transition: req.body.transition || 'none',
+      trimStart0: req.body.trimStart0,
+      trimEnd0: req.body.trimEnd0,
+      trimStart1: req.body.trimStart1,
+      trimEnd1: req.body.trimEnd1,
     };
 
     await mergeVideos(video1.path, video2.path, outputPath, settings, () => {});

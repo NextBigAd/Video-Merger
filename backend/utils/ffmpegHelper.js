@@ -5,9 +5,19 @@
  * Supports per-clip trimming via trim/atrim filters,
  * silent audio generation for videos without audio tracks,
  * and proper concat with both video and audio streams.
+ *
+ * All video streams are normalised to the same resolution, fps,
+ * and pixel format before concat. All audio streams are normalised
+ * to the same sample rate, sample format, and channel layout so
+ * that the concat filter never fails due to mismatched parameters.
  */
 
 const ffmpeg = require('fluent-ffmpeg');
+
+// ── Shared audio normalisation chain ──
+// Every audio path (real audio, trimmed audio, or synthetic silence)
+// must end with this so the concat filter sees identical parameters.
+const AUDIO_NORM = 'aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo';
 
 /**
  * Probe a video file and return { duration, hasAudio }.
@@ -74,7 +84,7 @@ async function mergeVideos(video1Path, video2Path, outputPath, settings, onProgr
   // ── Build filter graph ──
   const filters = [];
 
-  // Video 0
+  // ────────────── Video 0 ──────────────
   if (needTrim0) {
     filters.push(
       `[0:v]trim=start=${eff0Start}:end=${eff0End},setpts=PTS-STARTPTS,` +
@@ -88,24 +98,24 @@ async function mergeVideos(video1Path, video2Path, outputPath, settings, onProgr
     );
   }
 
-  // Audio 0
+  // ────────────── Audio 0 ──────────────
   if (probe0.hasAudio) {
     if (needTrim0) {
       filters.push(
-        `[0:a]atrim=start=${eff0Start}:end=${eff0End},asetpts=PTS-STARTPTS[a0]`
+        `[0:a]atrim=start=${eff0Start}:end=${eff0End},asetpts=PTS-STARTPTS,${AUDIO_NORM}[a0]`
       );
     } else {
-      filters.push(`[0:a]acopy[a0]`);
+      filters.push(`[0:a]${AUDIO_NORM}[a0]`);
     }
   } else {
-    // Generate silent audio for video 0
+    // Generate silent audio matching the video duration
     const dur0 = needTrim0 ? (eff0End - eff0Start) : probe0.duration;
     filters.push(
-      `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${dur0}[a0]`
+      `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${dur0},${AUDIO_NORM}[a0]`
     );
   }
 
-  // Video 1
+  // ────────────── Video 1 ──────────────
   if (needTrim1) {
     filters.push(
       `[1:v]trim=start=${eff1Start}:end=${eff1End},setpts=PTS-STARTPTS,` +
@@ -119,27 +129,27 @@ async function mergeVideos(video1Path, video2Path, outputPath, settings, onProgr
     );
   }
 
-  // Audio 1
+  // ────────────── Audio 1 ──────────────
   if (probe1.hasAudio) {
     if (needTrim1) {
       filters.push(
-        `[1:a]atrim=start=${eff1Start}:end=${eff1End},asetpts=PTS-STARTPTS[a1]`
+        `[1:a]atrim=start=${eff1Start}:end=${eff1End},asetpts=PTS-STARTPTS,${AUDIO_NORM}[a1]`
       );
     } else {
-      filters.push(`[1:a]acopy[a1]`);
+      filters.push(`[1:a]${AUDIO_NORM}[a1]`);
     }
   } else {
-    // Generate silent audio for video 1
+    // Generate silent audio matching the video duration
     const dur1 = needTrim1 ? (eff1End - eff1Start) : probe1.duration;
     filters.push(
-      `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${dur1}[a1]`
+      `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${dur1},${AUDIO_NORM}[a1]`
     );
   }
 
-  // Concat with both video and audio
+  // ────────────── Concat ──────────────
   filters.push(`[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]`);
 
-  // Watermark
+  // ────────────── Watermark (optional) ──────────────
   let finalVideoLabel = 'outv';
   if (watermark && watermark.trim()) {
     const safeText = watermark.replace(/'/g, "\\'").replace(/:/g, '\\:');
