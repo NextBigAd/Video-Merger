@@ -2,112 +2,173 @@
  * FFmpeg Helper
  *
  * Handles local video merging using fluent-ffmpeg.
- * Builds and executes FFmpeg commands based on user settings.
+ * Supports per-clip trimming via trim/atrim filters,
+ * silent audio generation for videos without audio tracks,
+ * and proper concat with both video and audio streams.
  */
 
 const ffmpeg = require('fluent-ffmpeg');
-const path = require('path');
+
+/**
+ * Probe a video file and return { duration, hasAudio }.
+ */
+function probeVideo(filePath) {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) return reject(err);
+      const hasAudio = metadata.streams.some((s) => s.codec_type === 'audio');
+      const duration = metadata.format.duration || 0;
+      resolve({ duration: parseFloat(duration), hasAudio });
+    });
+  });
+}
+
+/**
+ * Sanitize a trim value. Returns a valid float or null.
+ */
+function sanitizeTrim(val) {
+  if (val === undefined || val === null || val === '') return null;
+  const num = parseFloat(val);
+  return isNaN(num) ? null : num;
+}
 
 /**
  * Merge two videos locally using FFmpeg.
  * Returns a promise that resolves with the output file path.
  * Calls onProgress(percent) as FFmpeg processes.
  */
-function mergeVideos(video1Path, video2Path, outputPath, settings, onProgress) {
+async function mergeVideos(video1Path, video2Path, outputPath, settings, onProgress) {
+  const {
+    resolution = '1280x720',
+    watermark,
+  } = settings;
+
+  // Sanitize trim values
+  const trimStart0 = sanitizeTrim(settings.trimStart0) || 0;
+  const trimEnd0 = sanitizeTrim(settings.trimEnd0);
+  const trimStart1 = sanitizeTrim(settings.trimStart1) || 0;
+  const trimEnd1 = sanitizeTrim(settings.trimEnd1);
+
+  console.log('[Trim]', { trimStart0, trimEnd0, trimStart1, trimEnd1 });
+
+  // Probe both videos for duration and audio presence
+  const [probe0, probe1] = await Promise.all([
+    probeVideo(video1Path),
+    probeVideo(video2Path),
+  ]);
+
+  console.log('[Probe] Video1:', probe0, '| Video2:', probe1);
+
+  const [w, h] = resolution.split('x');
+
+  // Determine effective trim values
+  const eff0Start = trimStart0;
+  const eff0End = trimEnd0 !== null ? trimEnd0 : probe0.duration;
+  const eff1Start = trimStart1;
+  const eff1End = trimEnd1 !== null ? trimEnd1 : probe1.duration;
+
+  // Check if trimming is actually needed
+  const needTrim0 = eff0Start > 0 || (trimEnd0 !== null && trimEnd0 < probe0.duration);
+  const needTrim1 = eff1Start > 0 || (trimEnd1 !== null && trimEnd1 < probe1.duration);
+
+  // ── Build filter graph ──
+  const filters = [];
+
+  // Video 0
+  if (needTrim0) {
+    filters.push(
+      `[0:v]trim=start=${eff0Start}:end=${eff0End},setpts=PTS-STARTPTS,` +
+      `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
+      `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[v0]`
+    );
+  } else {
+    filters.push(
+      `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
+      `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[v0]`
+    );
+  }
+
+  // Audio 0
+  if (probe0.hasAudio) {
+    if (needTrim0) {
+      filters.push(
+        `[0:a]atrim=start=${eff0Start}:end=${eff0End},asetpts=PTS-STARTPTS[a0]`
+      );
+    } else {
+      filters.push(`[0:a]acopy[a0]`);
+    }
+  } else {
+    // Generate silent audio for video 0
+    const dur0 = needTrim0 ? (eff0End - eff0Start) : probe0.duration;
+    filters.push(
+      `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${dur0}[a0]`
+    );
+  }
+
+  // Video 1
+  if (needTrim1) {
+    filters.push(
+      `[1:v]trim=start=${eff1Start}:end=${eff1End},setpts=PTS-STARTPTS,` +
+      `scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
+      `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[v1]`
+    );
+  } else {
+    filters.push(
+      `[1:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,` +
+      `pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p[v1]`
+    );
+  }
+
+  // Audio 1
+  if (probe1.hasAudio) {
+    if (needTrim1) {
+      filters.push(
+        `[1:a]atrim=start=${eff1Start}:end=${eff1End},asetpts=PTS-STARTPTS[a1]`
+      );
+    } else {
+      filters.push(`[1:a]acopy[a1]`);
+    }
+  } else {
+    // Generate silent audio for video 1
+    const dur1 = needTrim1 ? (eff1End - eff1Start) : probe1.duration;
+    filters.push(
+      `aevalsrc=0:channel_layout=stereo:sample_rate=44100:duration=${dur1}[a1]`
+    );
+  }
+
+  // Concat with both video and audio
+  filters.push(`[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]`);
+
+  // Watermark
+  let finalVideoLabel = 'outv';
+  if (watermark && watermark.trim()) {
+    const safeText = watermark.replace(/'/g, "\\'").replace(/:/g, '\\:');
+    filters.push(
+      `[outv]drawtext=text='${safeText}':fontsize=24:fontcolor=white@0.7:` +
+      `x=w-tw-20:y=h-th-20:shadowcolor=black@0.5:shadowx=2:shadowy=2[outv2]`
+    );
+    finalVideoLabel = 'outv2';
+  }
+
+  const filterGraph = filters.join(';');
+  console.log('[FFmpeg] Filter graph:', filterGraph);
+
+  // ── Run FFmpeg ──
   return new Promise((resolve, reject) => {
-    const {
-      resolution = '1920x1080',
-      format = 'mp4',
-      quality = 'medium',
-      customBitrate,
-      audioOption = 'keepAll',
-      transition = 'none',
-      watermark,
-      trimStart0, trimEnd0,
-      trimStart1, trimEnd1,
-    } = settings;
-
-    const [w, h] = resolution.split('x');
-
-    // Build filter graph
-    let filterGraph = '';
-    if (transition === 'fade') {
-      filterGraph =
-        `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fade=t=out:st=0:d=0.5[v0];` +
-        `[1:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fade=t=in:st=0:d=0.5[v1];` +
-        `[v0][v1]concat=n=2:v=1:a=0[outv]`;
-    } else if (transition === 'crossfade') {
-      filterGraph =
-        `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];` +
-        `[1:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];` +
-        `[v0][v1]xfade=transition=fade:duration=1:offset=auto[outv]`;
-    } else {
-      filterGraph =
-        `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v0];` +
-        `[1:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2,setsar=1[v1];` +
-        `[v0][v1]concat=n=2:v=1:a=0[outv]`;
-    }
-
-    // Audio handling
-    let audioFilter = '';
-    if (audioOption === 'muteAll') {
-      // no audio
-    } else if (audioOption === 'keepFirst') {
-      audioFilter = ';[0:a]aresample=44100[outa]';
-    } else {
-      audioFilter = ';[0:a][1:a]concat=n=2:v=0:a=1[outa]';
-    }
-
-    // Watermark
-    let watermarkFilter = '';
-    if (watermark && watermark.trim()) {
-      const safeText = watermark.replace(/'/g, "\\'").replace(/:/g, '\\:');
-      watermarkFilter = `;[outv]drawtext=text='${safeText}':fontsize=24:fontcolor=white@0.7:x=w-tw-20:y=h-th-20:shadowcolor=black@0.5:shadowx=2:shadowy=2[outv2]`;
-    }
-
-    const fullFilter = filterGraph + audioFilter + watermarkFilter;
-    const finalVideoLabel = watermarkFilter ? 'outv2' : 'outv';
-
-    // Build the command
-    const cmd = ffmpeg();
-
-    // Input 1 with optional trim
-    const input1 = cmd.input(video1Path);
-    if (trimStart0 && trimStart0 !== '0') input1.inputOptions(`-ss ${trimStart0}`);
-    if (trimEnd0) input1.inputOptions(`-to ${trimEnd0}`);
-
-    // Input 2 with optional trim
-    const input2 = cmd.input(video2Path);
-    if (trimStart1 && trimStart1 !== '0') input2.inputOptions(`-ss ${trimStart1}`);
-    if (trimEnd1) input2.inputOptions(`-to ${trimEnd1}`);
-
-    cmd.complexFilter(fullFilter);
-
-    // Map outputs
-    cmd.outputOptions(`-map [${finalVideoLabel}]`);
-    if (audioOption === 'muteAll') {
-      cmd.outputOptions('-an');
-    } else {
-      cmd.outputOptions('-map [outa]');
-    }
-
-    // Quality
-    if (quality === 'custom' && customBitrate) {
-      cmd.outputOptions(`-b:v ${customBitrate}`);
-    } else {
-      const crf = quality === 'high' ? '18' : quality === 'low' ? '28' : '23';
-      cmd.outputOptions(`-crf ${crf}`);
-    }
-
-    // Codec
-    if (format === 'webm') {
-      cmd.outputOptions(['-c:v libvpx-vp9', '-c:a libopus']);
-    } else {
-      cmd.outputOptions(['-c:v libx264', '-c:a aac', '-preset fast', '-movflags +faststart']);
-    }
-
-    cmd
-      .outputOptions('-y')
+    const cmd = ffmpeg()
+      .input(video1Path)
+      .input(video2Path)
+      .complexFilter(filterGraph)
+      .outputOptions([
+        `-map [${finalVideoLabel}]`,
+        '-map [outa]',
+        '-c:v libx264',
+        '-c:a aac',
+        '-preset fast',
+        '-crf 23',
+        '-movflags +faststart',
+        '-y',
+      ])
       .output(outputPath)
       .on('progress', (progress) => {
         if (onProgress && progress.percent) {
@@ -121,8 +182,9 @@ function mergeVideos(video1Path, video2Path, outputPath, settings, onProgress) {
       .on('error', (err) => {
         console.error('[FFmpeg] Error:', err.message);
         reject(err);
-      })
-      .run();
+      });
+
+    cmd.run();
   });
 }
 
